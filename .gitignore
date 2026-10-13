@@ -1,0 +1,17 @@
+# Ambientes e arquivos temporários do SO
+.DS_Store
+Thumbs.db
+*.tmp
+*.bak
+*~
+
+# Bancos locais e dumps temporários
+*.db
+*.sqlite3
+*.dump
+*.log
+
+# Ferramentas de desenvolvimento e IDEs
+.vscode/
+.idea/
+.maestri/floors/
