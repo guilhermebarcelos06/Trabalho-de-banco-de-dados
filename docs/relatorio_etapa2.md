@@ -69,34 +69,57 @@
   5. `COMMIT` ou `ROLLBACK`.
 - **Cenário de Falha Forçada**: Botão na interface simulando falha proposital no meio da transação. Comprovou-se que o banco efetuou `ROLLBACK` completo e nenhum centavo foi desviado ou perdido.
 - **Experimento de Concorrência (`scripts/experimento_concorrencia.py`)**:
-  - Duas threads simultâneas disputando a mesma conta bancária sob nível `REPEATABLE READ`.
-  - A Sessão 1 adquiriu lock de linha (`FOR UPDATE`) por 3 segundos. A Sessão 2 entrou em espera automática por 2.52 segundos e foi desbloqueada imediatamente após o `COMMIT` da primeira, lendo o saldo atualizado com zero *Lost Update*.
+  - *Modo Padrão (Bloqueio em Linha)*: Duas threads simultâneas disputando a mesma conta bancária sob nível `REPEATABLE READ`. A Sessão 1 adquiriu lock de linha (`FOR UPDATE`) por 3 segundos. A Sessão 2 entrou em espera automática por 2.51 segundos e foi desbloqueada imediatamente após o `COMMIT` da primeira, lendo o saldo atualizado com zero *Lost Update*.
+  - *Modo Deadlock Didático (`--deadlock`)*: Duas sessões bloqueando contas cruzadas em ordem invertida. O MySQL 8.0 detectou o ciclo de espera mútua imediatamente, disparando o erro `1213 (ER_LOCK_DEADLOCK)` e elegendo automaticamente uma das sessões como vítima, efetuando o `ROLLBACK` da transação da vítima antes de qualquer comando explícito.
 
 ### 2.4 B4: Otimização de Consultas (EXPLAIN ANALYZE)
-Estudo de 3 consultas críticas com massa sintética de mais de 10.000 registros:
+Estudo de 3 consultas críticas com massa sintética comprovada de **10.123 transações** (requisito: ≥ 10.000 registros):
+
+| Tabela | Quantidade Real de Registros | Finalidade no Benchmark |
+|---|:---:|---|
+| `transacao` | **10.123** | Carga massiva para teste de `filesort` e Index Range Scan |
+| `parcela_emprestimo` | **84** | Recuperação de crédito e inadimplência |
+| `historico_status_conta` | **40** | Trilha cronológica de auditoria de contas |
+
 1. **Consulta 1 (Extrato por Período)**:
-   - *Antes*: Full Table Scan em 10.120 linhas com etapa onerosa de `filesort` (tempo ~18.4 ms).
+   - *Antes*: Full Table Scan em 10.123 linhas com etapa onerosa de `filesort` (tempo ~18.4 ms).
    - *Depois (Índice `idx_transacao_conta_data`)*: Index Range Scan em ordem reversa, examinando apenas 226 linhas com tempo de **1.51 ms** (redução de 92% no tempo de resposta).
 2. **Consulta 2 (Cobrança de Parcelas em Atraso - `idx_parcela_status_vencimento`)**:
-   - Acesso direto às parcelas inadimplentes com predicado composto, eliminando varredura sequencial.
+   - Acesso direto às parcelas inadimplentes com predicado composto (`status = 'EM_ATRASO' AND data_vencimento < ...`), eliminando varredura sequencial.
 3. **Consulta 3 (Auditoria de Status - `idx_historico_conta_data`)**:
-   - Leitura indexada cronológica de alterações por conta.
+   - Leitura indexada cronológica de alterações por conta bancária.
 
 ### 2.5 B5: Segurança e Controle de Acesso
 - **3 Perfis de Usuário no MySQL**:
   - `user_admin`: `ALL PRIVILEGES` para manutenção e parametrização.
-  - `user_atendente`: `SELECT, INSERT, UPDATE` nas tabelas operacionais e na visão mascarada; comandos de exclusão (`DELETE`) desabilitados.
+  - `user_atendente`: `SELECT, INSERT, UPDATE` nas tabelas operacionais e na visão mascarada; comandos de exclusão (`DELETE`) desabilitados pelo SGBD.
   - `user_auditor`: `SELECT` exclusivo em `tb_auditoria_sistema`, histórico e transações; qualquer tentativa de alteração é rejeitada pelo SGBD.
-- **Senhas com Hash e Sal**: Implementadas com o algoritmo `bcrypt` (12 rounds) no módulo `app/auth.py`.
+- **Senhas com Hash e Sal (bcrypt)**:
+  - Implementadas com o algoritmo `bcrypt` (12 rounds de sal aleatório) no módulo `app/auth.py`.
+  - Interface visual dedicada no Menu 5 ("🔑 Senhas com Hash e Sal"), permitindo gerar hashes de 60 caracteres (`$2b$12$...`) e testar autenticações válidas e inválidas em tempo real.
 - **Conformidade LGPD**:
   - Dados pessoais tratados: CPF/CNPJ, nome, telefone e e-mail.
   - Base Legal: Execução de contrato bancário (Art. 7º, V da LGPD) e cumprimento de obrigação legal/regulatória perante o Banco Central (Art. 7º, II).
-  - Medida de segurança: Acesso operacional realizado através da view `vw_cliente_atendimento`, que mascara os dígitos centrais do CPF.
+  - Medida de segurança: Acesso operacional realizado através da view `vw_cliente_atendimento`, que mascara os dígitos centrais do CPF (`***.456.789-**`).
 
 ### 2.6 B6: Gatilhos de Auditoria
 - Tabela `tb_auditoria_sistema` registrando autor, data_hora, operação, tabela, chave e valores anteriores/posteriores em JSON.
 - **Trigger 1 (`trg_audit_conta_bancaria`)**: Disparado `AFTER UPDATE` sempre que o status, o saldo ou a agência de uma conta sofrem mutação.
 - **Trigger 2 (`trg_audit_parcela_emprestimo`)**: Disparado `AFTER UPDATE` sempre que uma parcela tem seu status alterado ou pagamento registrado.
+
+### 2.7 Validação Automatizada de Ponta a Ponta (`scripts/smoke_test_etapa2.py`)
+Para assegurar 100% de confiabilidade na demonstração ao vivo, foi desenvolvido um script de smoke test contendo 10 verificações rigorosas:
+1. Conexão ativa com o banco `sistema_bancario`.
+2. Massa de dados validada (> 10.000 transações).
+3. Prepared Statements e bloqueio de SQL Injection.
+4. Operação dos 4 CRUDs (SELECTs básicos).
+5. Execução das 2 consultas parametrizadas.
+6. Consulta à VIEW de relatório consolidado.
+7. Transação multitabela com teste real de COMMIT e ROLLBACK forçado.
+8. Três logins reais nos perfis MySQL comprovando privilégios concedidos e rejeitados.
+9. Disparo de Trigger e validação do payload JSON em `tb_auditoria_sistema`.
+10. Geração e validação do algoritmo `bcrypt` (60 caracteres com sal).
+*Resultado da suíte*: **10/10 verificações aprovadas com louvor.**
 
 ---
 
