@@ -1,6 +1,14 @@
 import streamlit as st
 import pandas as pd
 import altair as alt
+import importlib
+
+# Forçar hot-reload de módulos locais para evitar cache desatualizado no Streamlit
+import ui_components
+importlib.reload(ui_components)
+import validators
+importlib.reload(validators)
+
 from db import execute_query, execute_dml, executar_transferencia_transacional, get_connection
 from auth import hash_senha, verificar_senha
 from theme import apply_custom_theme
