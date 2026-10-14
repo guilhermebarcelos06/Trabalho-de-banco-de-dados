@@ -21,6 +21,7 @@ from ui_components import (
     render_searchable_account_picker
 )
 from validators import (
+    validar_busca_id_cpf,
     validar_cpf_cnpj,
     validar_email,
     validar_telefone,
@@ -165,6 +166,18 @@ if menu == "1. CRUD de 4 Entidades (B1)":
                 key="busca_cli_input"
             )
 
+            # Bloqueia entradas inválidas antes de consultar ou selecionar clientes.
+            if termo_busca:
+                busca_valida, mensagem_busca = validar_busca_id_cpf(termo_busca)
+                if not busca_valida:
+                    render_callout(
+                        "Apenas Números São Permitidos",
+                        mensagem_busca,
+                        callout_type="error",
+                        icon="❌"
+                    )
+                    st.stop()
+
             # Busca dinâmica incremental por ID ou CPF
             if termo_busca.strip():
                 sql_busca = """
@@ -173,12 +186,11 @@ if menu == "1. CRUD de 4 Entidades (B1)":
                 WHERE CAST(id_cliente AS CHAR) LIKE %s 
                    OR REPLACE(REPLACE(REPLACE(cpf_cnpj, '.', ''), '-', ''), '/', '') LIKE %s
                    OR cpf_cnpj LIKE %s
-                   OR nome LIKE %s
-                ORDER BY id_cliente ASC 
+                ORDER BY CASE WHEN id_cliente = %s THEN 0 ELSE 1 END, id_cliente ASC
                 LIMIT 30;
                 """
                 term = f"%{termo_busca.strip()}%"
-                res_busca, err_busca = execute_query(sql_busca, (term, term, term, term))
+                res_busca, err_busca = execute_query(sql_busca, (term, term, term, termo_busca))
             else:
                 sql_busca = "SELECT id_cliente, cpf_cnpj, nome, telefone, email FROM cliente ORDER BY id_cliente DESC LIMIT 20;"
                 res_busca, err_busca = execute_query(sql_busca)

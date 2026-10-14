@@ -176,3 +176,19 @@ def validar_numero_cartao(n_cartao: str) -> tuple[bool, str]:
     
     return True, "Número de cartão válido."
 
+
+
+def validar_busca_id_cpf(termo: str) -> tuple[bool, str]:
+    """Aceita somente dígitos ASCII para a busca incremental por ID ou CPF/CNPJ."""
+    if re.search(r"[a-zA-Z]", termo):
+        return False, "O campo de busca por ID/CPF aceita exclusivamente dígitos numéricos (0-9). Letras não são permitidas."
+    if not re.fullmatch(r"[0-9]+", termo):
+        return False, "O campo de busca por ID/CPF aceita exclusivamente dígitos numéricos (0-9)."
+    return True, "Busca por ID/CPF válida."
+
+
+def validar_codigo_agencia(agencia: str) -> tuple[bool, str]:
+    """Exige código de agência com 1 a 5 dígitos ASCII, sem letras ou símbolos."""
+    if not re.fullmatch(r"[0-9]{1,5}", agencia):
+        return False, "O código da agência deve conter de 1 a 5 dígitos numéricos (0-9). Letras não são permitidas."
+    return True, "Código da agência válido."

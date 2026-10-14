@@ -9,6 +9,8 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../app")))
 
 from validators import (
+    validar_busca_id_cpf,
+    validar_codigo_agencia,
     validar_cpf,
     validar_cnpj,
     validar_cpf_cnpj,
@@ -20,6 +22,45 @@ from validators import (
 )
 
 class TestValidators(unittest.TestCase):
+
+    def test_busca_id_cpf_rejeita_letras(self):
+        validar = validar_busca_id_cpf
+        mensagem = "O campo de busca por ID/CPF aceita exclusivamente dígitos numéricos (0-9). Letras não são permitidas."
+        for termo in ("sfasdasdAWS", "4A", "abc"):
+            with self.subTest(termo=termo):
+                self.assertEqual(validar(termo), (False, mensagem))
+
+    def test_busca_id_cpf_aceita_digitos(self):
+        validar = validar_busca_id_cpf
+        for termo in ("4", "004", "52998224725", "12345678901234"):
+            with self.subTest(termo=termo):
+                ok, msg = validar(termo)
+                self.assertTrue(ok, msg)
+
+    def test_busca_id_cpf_rejeita_outros_caracteres(self):
+        validar = validar_busca_id_cpf
+        for termo in ("", " ", "4 5", "4%", "4_", "4-5", "４", "á", "4\n"):
+            with self.subTest(termo=termo):
+                self.assertFalse(validar(termo)[0])
+
+    def test_codigo_agencia_aceita_um_a_cinco_digitos(self):
+        validar = validar_codigo_agencia
+        for agencia in ("0", "1", "0042", "12345"):
+            with self.subTest(agencia=agencia):
+                ok, msg = validar(agencia)
+                self.assertTrue(ok, msg)
+
+    def test_codigo_agencia_rejeita_letras(self):
+        validar = validar_codigo_agencia
+        for agencia in ("abc", "12A", "sfasdasdAWS"):
+            with self.subTest(agencia=agencia):
+                self.assertFalse(validar(agencia)[0])
+
+    def test_codigo_agencia_rejeita_tamanho_e_caracteres_invalidos(self):
+        validar = validar_codigo_agencia
+        for agencia in ("", "123456", " ", "1 2", "12-3", "１２", "1\n"):
+            with self.subTest(agencia=agencia):
+                self.assertFalse(validar(agencia)[0])
 
     def test_cpf_valido(self):
         # CPFs com dígitos verificadores matematicamente válidos
