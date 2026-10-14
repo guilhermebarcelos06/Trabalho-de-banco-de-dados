@@ -5,6 +5,8 @@
 -- ============================================================================
 
 USE sistema_bancario;
+SET NAMES utf8mb4;
+SET time_zone = '-03:00';
 
 SET FOREIGN_KEY_CHECKS = 0;
 TRUNCATE TABLE beneficiario;

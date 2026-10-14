@@ -17,14 +17,24 @@ def get_connection(user=None, password=None):
     db_user = user or os.getenv("DB_USER", "root")
     db_pass = password or os.getenv("DB_PASSWORD", "banco_secret")
 
-    return mysql.connector.connect(
+    conn = mysql.connector.connect(
         host=db_host,
         port=db_port,
         database=db_name,
         user=db_user,
         password=db_pass,
+        charset="utf8mb4",
+        collation="utf8mb4_unicode_ci",
         autocommit=False
     )
+    # Garante que NOW(), CURRENT_TIMESTAMP e transações operem no fuso de Brasília (-03:00)
+    try:
+        cur = conn.cursor()
+        cur.execute("SET time_zone = '-03:00';")
+        cur.close()
+    except Exception:
+        pass
+    return conn
 
 def traduzir_erro_banco(err: Error) -> str:
     """

@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import altair as alt
 from db import execute_query, execute_dml, executar_transferencia_transacional, get_connection
 from auth import hash_senha, verificar_senha
 from theme import apply_custom_theme
@@ -9,6 +10,12 @@ from ui_components import (
     render_empty_state,
     render_status_badge,
     render_callout
+)
+from validators import (
+    validar_cpf_cnpj,
+    validar_email,
+    validar_telefone,
+    formatar_moeda
 )
 
 # Configuração da página Streamlit (layout amplo, título e favicon)
@@ -105,16 +112,32 @@ if menu == "1. CRUD de 4 Entidades (B1)":
                 c1, c2 = st.columns(2)
                 with c1:
                     nome = st.text_input("Nome Completo / Razão Social:")
-                    cpf_cnpj = st.text_input("CPF ou CNPJ (único):")
+                    cpf_cnpj = st.text_input("CPF ou CNPJ (único, 11 ou 14 dígitos):")
                 with c2:
-                    telefone = st.text_input("Telefone (opcional):")
-                    email = st.text_input("E-mail corporativo/pessoal:")
+                    telefone = st.text_input("Telefone (opcional, com DDD):", placeholder="(61) 98765-4321")
+                    email = st.text_input("E-mail corporativo/pessoal:", placeholder="usuario@dominio.com")
                 
                 sub = st.form_submit_button("Cadastrar Cliente", type="primary")
                 if sub:
                     if not nome or not cpf_cnpj or not email:
                         st.warning("Preencha todos os campos obrigatórios (Nome, CPF/CNPJ e E-mail).")
                     else:
+                        # Validações Estritas (validators.py)
+                        ok_doc, msg_doc = validar_cpf_cnpj(cpf_cnpj)
+                        if not ok_doc:
+                            st.error(f"❌ Documento Inválido: {msg_doc}")
+                            st.stop()
+                        
+                        ok_mail, msg_mail = validar_email(email)
+                        if not ok_mail:
+                            st.error(f"❌ E-mail Inválido: {msg_mail}")
+                            st.stop()
+                        
+                        ok_tel, msg_tel = validar_telefone(telefone)
+                        if not ok_tel:
+                            st.error(f"❌ Telefone Inválido: {msg_tel}")
+                            st.stop()
+                        
                         sql = "INSERT INTO cliente (cpf_cnpj, nome, telefone, email) VALUES (%s, %s, %s, %s);"
                         tel_val = telefone.strip() if telefone and telefone.strip() else None
                         ok, last_id, err = execute_dml(sql, (cpf_cnpj.strip(), nome.strip(), tel_val, email.strip()))
@@ -124,29 +147,100 @@ if menu == "1. CRUD de 4 Entidades (B1)":
                             st.error(err)
 
         with tab_edit:
-            id_cli_edit = st.number_input("Informe o ID do Cliente para Gestão:", min_value=1, step=1)
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown("**Atualização de Contato**")
-                novo_tel = st.text_input("Novo Telefone:")
-                novo_email = st.text_input("Novo E-mail:")
-                if st.button("Salvar Alterações de Contato"):
-                    sql = "UPDATE cliente SET telefone = %s, email = %s WHERE id_cliente = %s;"
-                    ok, _, err = execute_dml(sql, (novo_tel, novo_email, id_cli_edit))
-                    if ok:
-                        st.success("✅ Contato do cliente atualizado com sucesso!")
-                    else:
-                        st.error(err)
-            with col2:
-                st.markdown("**Exclusão com Integridade Referencial**")
-                st.caption("A exclusão será bloqueada com mensagem clara caso o cliente possua contas vinculadas.")
-                if st.button("Excluir Cliente com Segurança", type="secondary"):
-                    sql = "DELETE FROM cliente WHERE id_cliente = %s;"
-                    ok, _, err = execute_dml(sql, (id_cli_edit,))
-                    if ok:
-                        st.success("Cliente removido com sucesso!")
-                    else:
-                        st.error(err)
+            st.markdown("#### 🔍 Localizar Cliente para Gestão")
+            termo_busca = st.text_input(
+                "Pesquisar por ID ou CPF/CNPJ (busca dinâmica incremental):",
+                placeholder="Exemplo: digite '4' para listar todos com 4 no ID ou CPF...",
+                key="busca_cli_input"
+            )
+
+            # Busca dinâmica incremental por ID ou CPF
+            if termo_busca.strip():
+                sql_busca = """
+                SELECT id_cliente, cpf_cnpj, nome, telefone, email 
+                FROM cliente 
+                WHERE CAST(id_cliente AS CHAR) LIKE %s 
+                   OR REPLACE(REPLACE(REPLACE(cpf_cnpj, '.', ''), '-', ''), '/', '') LIKE %s
+                   OR cpf_cnpj LIKE %s
+                   OR nome LIKE %s
+                ORDER BY id_cliente ASC 
+                LIMIT 30;
+                """
+                term = f"%{termo_busca.strip()}%"
+                res_busca, err_busca = execute_query(sql_busca, (term, term, term, term))
+            else:
+                sql_busca = "SELECT id_cliente, cpf_cnpj, nome, telefone, email FROM cliente ORDER BY id_cliente DESC LIMIT 20;"
+                res_busca, err_busca = execute_query(sql_busca)
+
+            if err_busca:
+                st.error(err_busca)
+            elif not res_busca:
+                render_callout(
+                    "Cliente Não Encontrado",
+                    f"Nenhum cliente cadastrado foi localizado com o identificador ou termo '{termo_busca}'. Verifique se o ID ou CPF digitado está correto.",
+                    callout_type="warning",
+                    icon="⚠️"
+                )
+            else:
+                opcoes = {c["id_cliente"]: f"ID #{c['id_cliente']} · {c['nome']} (CPF/CNPJ: {c['cpf_cnpj']})" for c in res_busca}
+                id_cli_edit = st.selectbox(
+                    f"Selecione o Cliente ({len(res_busca)} registros encontrados):",
+                    options=list(opcoes.keys()),
+                    format_func=lambda x: opcoes[x],
+                    key="sel_cli_found"
+                )
+
+                cli_atual = next(c for c in res_busca if c["id_cliente"] == id_cli_edit)
+
+                st.markdown("---")
+                st.info(f"👤 **Cliente Selecionado:** #{cli_atual['id_cliente']} - **{cli_atual['nome']}** | Documento: `{cli_atual['cpf_cnpj']}`")
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown("**✏️ Atualização de Contato**")
+                    novo_tel = st.text_input("Telefone de Contato:", value=cli_atual['telefone'] or "", key=f"tel_edit_{id_cli_edit}")
+                    novo_email = st.text_input("Endereço de E-mail:", value=cli_atual['email'] or "", key=f"email_edit_{id_cli_edit}")
+                    
+                    if st.button("Salvar Alterações de Contato", type="primary", key=f"btn_salvar_{id_cli_edit}"):
+                        ok_mail, msg_mail = validar_email(novo_email)
+                        if not ok_mail:
+                            st.error(f"❌ {msg_mail}")
+                            st.stop()
+                        
+                        ok_tel, msg_tel = validar_telefone(novo_tel)
+                        if not ok_tel:
+                            st.error(f"❌ {msg_tel}")
+                            st.stop()
+                        
+                        sql = "UPDATE cliente SET telefone = %s, email = %s WHERE id_cliente = %s;"
+                        tel_val = novo_tel.strip() if novo_tel and novo_tel.strip() else None
+                        ok, _, err = execute_dml(sql, (tel_val, novo_email.strip(), id_cli_edit))
+                        if ok:
+                            st.success("✅ Dados de contato atualizados com sucesso no banco!")
+                            st.rerun()
+                        else:
+                            st.error(err)
+
+                with col2:
+                    st.markdown("**🗑️ Exclusão Segura com Confirmação**")
+                    st.caption("A exclusão será bloqueada pelo banco caso o cliente possua contas vinculadas.")
+                    
+                    confirmar_del = st.checkbox(
+                        f"⚠️ Confirmo que desejo excluir permanentemente o cliente #{id_cli_edit} ({cli_atual['nome']})",
+                        key=f"chk_confirm_del_{id_cli_edit}"
+                    )
+                    
+                    if st.button("Excluir Cliente com Segurança", type="secondary", key=f"btn_del_{id_cli_edit}"):
+                        if not confirmar_del:
+                            st.warning("⚠️ Para sua segurança, marque a caixa de confirmação acima antes de prosseguir com a exclusão.")
+                        else:
+                            sql = "DELETE FROM cliente WHERE id_cliente = %s;"
+                            ok, _, err = execute_dml(sql, (id_cli_edit,))
+                            if ok:
+                                st.success("✅ Cliente removido com sucesso!")
+                                st.rerun()
+                            else:
+                                st.error(err)
 
     # -----------------------------
     # CRUD 2: CONTA BANCÁRIA
@@ -296,9 +390,20 @@ elif menu == "2. Consultas Parametrizadas (B1)":
     )
 
     if tipo_cons == "Extrato Financeiro por Período & Conta":
+        modo_extrato = st.radio(
+            "Modo de Filtro de Contas:",
+            ["Conta Específica", "🌐 Todas as Contas (Consolidado Geral)"],
+            horizontal=True,
+            key="modo_extrato_radio"
+        )
+
         c1, c2, c3 = st.columns([1.5, 1, 1])
         with c1:
-            conta_filtro = st.text_input("Número da Conta (deixe vazio para todas):", value="10001-X")
+            if modo_extrato == "Conta Específica":
+                conta_filtro = st.text_input("Número da Conta Bancária:", value="10001-X", placeholder="Ex: 10001-X")
+            else:
+                conta_filtro = ""
+                st.text_input("Filtro de Conta:", value="Todas as Contas Selecionadas", disabled=True)
         with c2:
             data_ini = st.date_input("Data Inicial:", value=pd.to_datetime("2024-01-01"))
         with c3:
@@ -307,9 +412,30 @@ elif menu == "2. Consultas Parametrizadas (B1)":
         if st.button("Buscar Extrato Parametrizado", type="primary"):
             params = [f"{data_ini} 00:00:00", f"{data_fim} 23:59:59"]
             where_conta = ""
-            if conta_filtro.strip():
+            
+            if modo_extrato == "Conta Específica":
+                conta_alvo = conta_filtro.strip()
+                if not conta_alvo:
+                    st.warning("⚠️ Por favor, informe o número da conta para consultar ou selecione 'Todas as Contas'.")
+                    st.stop()
+                
+                # Validação de existência da conta no banco
+                res_check, _ = execute_query(
+                    "SELECT 1 FROM conta_bancaria WHERE numero_conta = %s;",
+                    (conta_alvo,),
+                    fetch_all=False
+                )
+                if not res_check:
+                    render_callout(
+                        "Conta Não Encontrada",
+                        f"A conta bancária '{conta_alvo}' não foi localizada no cadastro do banco. Verifique o número digitado ou utilize a opção 'Todas as Contas (Consolidado Geral)'.",
+                        callout_type="warning",
+                        icon="⚠️"
+                    )
+                    st.stop()
+
                 where_conta = "AND (t.numero_conta_origem = %s OR t.numero_conta_destino = %s)"
-                params.extend([conta_filtro.strip(), conta_filtro.strip()])
+                params.extend([conta_alvo, conta_alvo])
 
             sql = f"""
             SELECT 
@@ -403,11 +529,67 @@ elif menu == "3. Relatório Consolidado - VIEW (B1)":
         render_kpi(c2, "Custódia Global", f"R$ {df['saldo_total_custodia'].sum():,.2f}", "Depósitos totais sob custódia", badge_text="Depósitos", badge_type="success")
         render_kpi(c3, "Volume Movimentado", f"R$ {df['volume_total_transacionado'].sum():,.2f}", "Total de transações registradas", badge_text="Movimento", badge_type="neutral")
         
-        st.markdown("### Resumo por Agência")
-        st.dataframe(df, use_container_width=True)
+        st.markdown("### Resumo Consolidado por Agência")
         
-        st.markdown("### Distribuição de Volume Transacionado")
-        st.bar_chart(data=df.set_index("nome_agencia")["volume_total_transacionado"])
+        # Formatação profissional dos valores numéricos para visualização
+        df_formatado = df.copy()
+        df_formatado["saldo_total_custodia"] = df_formatado["saldo_total_custodia"].apply(lambda v: formatar_moeda(float(v)))
+        df_formatado["volume_total_transacionado"] = df_formatado["volume_total_transacionado"].apply(lambda v: formatar_moeda(float(v)))
+        df_formatado["total_contas_ativas"] = df_formatado["total_contas_ativas"].astype(int)
+        df_formatado["quantidade_transacoes"] = df_formatado["quantidade_transacoes"].apply(lambda v: f"{int(v):,}".replace(",", "."))
+        
+        st.dataframe(
+            df_formatado.rename(columns={
+                "codigo_agencia": "Cód.",
+                "nome_agencia": "Nome da Agência",
+                "total_contas_ativas": "Contas Ativas",
+                "saldo_total_custodia": "Saldo em Custódia",
+                "volume_total_transacionado": "Volume Transacionado",
+                "quantidade_transacoes": "Qtd. Transações"
+            }),
+            use_container_width=True
+        )
+        
+        st.markdown("### 📈 Distribuição de Volume Transacionado por Agência")
+        
+        # Gráfico Horizontal Elegante em Altair (elimina textos verticais)
+        df_chart = df.copy()
+        df_chart["volume_milhoes"] = df_chart["volume_total_transacionado"] / 1e6
+        df_chart["volume_fmt"] = df_chart["volume_total_transacionado"].apply(lambda v: formatar_moeda(float(v)))
+        
+        chart = alt.Chart(df_chart).mark_bar(
+            cornerRadiusEnd=6,
+            color="#3b82f6"
+        ).encode(
+            y=alt.Y(
+                "nome_agencia:N",
+                title=None,
+                sort="-x",
+                axis=alt.Axis(
+                    labelAngle=0,
+                    labelLimit=280,
+                    labelColor="#f9fafb",
+                    labelFontSize=13
+                )
+            ),
+            x=alt.X(
+                "volume_milhoes:Q",
+                title="Volume Movimentado (R$ Milhões)",
+                axis=alt.Axis(format=".1f", labelColor="#9ca3af")
+            ),
+            tooltip=[
+                alt.Tooltip("nome_agencia:N", title="Agência"),
+                alt.Tooltip("volume_fmt:N", title="Volume Total"),
+                alt.Tooltip("total_contas_ativas:Q", title="Contas Ativas"),
+                alt.Tooltip("quantidade_transacoes:Q", title="Nº de Transações")
+            ]
+        ).properties(
+            height=260
+        ).configure_view(
+            strokeOpacity=0
+        )
+        
+        st.altair_chart(chart, use_container_width=True)
     elif err:
         st.error(err)
     else:
