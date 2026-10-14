@@ -11,6 +11,17 @@ Thumbs.db
 *.dump
 *.log
 
+# Credenciais e Variáveis de Ambiente (Obrigatório fora do versionamento)
+.env
+.env.local
+
+# Python virtual environment e cache
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
 # Ferramentas de desenvolvimento e IDEs
 .vscode/
 .idea/
