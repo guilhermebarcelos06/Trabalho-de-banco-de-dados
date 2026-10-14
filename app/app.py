@@ -708,6 +708,14 @@ elif menu == "4. Transação Multitabela & Rollback (B1/B3)":
             if c_origem == c_destino:
                 st.error("❌ A conta de origem e a conta de destino devem ser distintas.")
                 st.stop()
+            if valor_transf > saldo_o:
+                render_callout(
+                    "Saldo Insuficiente",
+                    f"O saldo disponível é {formatar_moeda(saldo_o)}, mas a transferência solicitada é de {formatar_moeda(valor_transf)}. Informe um valor dentro do saldo disponível.",
+                    callout_type="error",
+                    icon="⚠️"
+                )
+                st.stop()
             sucesso, msg = executar_transferencia_transacional(c_origem, c_destino, valor_transf, simular_falha=False)
             if sucesso:
                 st.success(msg)
@@ -744,7 +752,7 @@ elif menu == "5. Segurança & SQL Injection (B2/B5)":
         icon="🛡️"
     )
 
-    tab_inj, tab_perfis, tab_lgpd = st.tabs(["🧪 Teste de SQL Injection", "👥 Perfis MySQL & Privilégios", "🔒 Proteção LGPD"])
+    tab_inj, tab_perfis, tab_lgpd, tab_hash = st.tabs(["🧪 Teste de SQL Injection", "👥 Perfis MySQL & Privilégios", "🔒 Proteção LGPD", "🔑 Senhas com Hash e Sal (bcrypt)"])
 
     with tab_inj:
         st.markdown("### Demonstração de Imunidade a Injeção de Código")
@@ -791,6 +799,48 @@ elif menu == "5. Segurança & SQL Injection (B2/B5)":
         if res_v:
             st.dataframe(pd.DataFrame(res_v), use_container_width=True)
 
+    with tab_hash:
+        st.markdown("### Hash com sal e autenticação (B5 / Anexo C)")
+        st.markdown(
+            "O requisito **B5** e o **Anexo C** exigem que senhas da aplicação sejam armazenadas com hash e sal, nunca em texto claro. "
+            "O bcrypt gera um sal aleatório e aplica um fator de custo: a mesma senha produz hashes diferentes a cada geração. "
+            "O hash de **60 caracteres**, iniciado por `$2b$`, incorpora a versão, o custo, o sal e o resultado. "
+            "A autenticação compara a senha informada com o hash usando `verificar_senha()`; não é necessário recuperar a senha original."
+        )
+        st.caption("Demonstração: o hash fica apenas na sessão atual. Em um cadastro real, persiste-se o hash no banco; esta aba complementa a evidência de B5.")
+        senha_plana = st.text_input(
+            "Senha para gerar o hash:", type="password",
+            placeholder="Exemplo: MinhaSenha#2026", key="bcrypt_senha_plana"
+        )
+        if st.button("Gerar Hash com Sal (bcrypt)", type="primary"):
+            if not senha_plana:
+                st.error("Informe uma senha para gerar o hash.")
+            elif len(senha_plana.encode("utf-8")) > 72:
+                st.error("O bcrypt aceita no máximo 72 bytes por senha. Reduza o tamanho da senha.")
+            else:
+                with st.spinner("Gerando hash com sal aleatório..."):
+                    st.session_state["bcrypt_hash_demo"] = hash_senha(senha_plana)
+                st.success("Hash com sal gerado com sucesso.")
+
+        hash_demo = st.session_state.get("bcrypt_hash_demo")
+        if hash_demo:
+            st.code(hash_demo, language="text")
+            st.caption(f"Tamanho do hash: {len(hash_demo)} caracteres. O sal já está incorporado ao hash.")
+        else:
+            st.info("Gere um hash para habilitar o teste de autenticação.")
+
+        st.markdown("#### Teste de autenticação")
+        senha_teste = st.text_input("Senha para autenticar:", type="password", key="bcrypt_senha_teste")
+        if st.button("Testar Autenticação", disabled=not hash_demo):
+            if not hash_demo:
+                st.info("Gere um hash antes de testar a autenticação.")
+            elif not senha_teste:
+                st.error("Informe a senha a ser verificada.")
+            elif verificar_senha(senha_teste, hash_demo):
+                st.success("Autenticação bem-sucedida: a senha corresponde ao hash gerado.")
+            else:
+                st.error("Autenticação recusada: a senha não corresponde ao hash gerado.")
+
 # ==============================================================================
 # 6. OTIMIZAÇÃO & EXPLAIN (B4)
 # ==============================================================================
@@ -802,6 +852,27 @@ elif menu == "6. Otimização & EXPLAIN (B4)":
         badge_type="info",
         icon="⚡"
     )
+
+    with st.spinner("Consultando o volume real das tabelas..."):
+        volumes, erro_volumes = execute_query(
+            "SELECT (SELECT COUNT(*) FROM transacao) AS transacoes, "
+            "(SELECT COUNT(*) FROM parcela_emprestimo) AS parcelas, "
+            "(SELECT COUNT(*) FROM historico_status_conta) AS historicos;"
+        )
+    if erro_volumes:
+        st.error(f"Não foi possível consultar o volume de dados: {erro_volumes}")
+    elif volumes:
+        volume = volumes[0]
+        kpi_transacoes, kpi_parcelas, kpi_historicos = st.columns(3)
+        render_kpi(kpi_transacoes, "Transações", f"{volume['transacoes']:,}".replace(",", "."), "Linhas reais em transacao", badge_text="Volume", badge_type="primary")
+        render_kpi(kpi_parcelas, "Parcelas de Empréstimo", f"{volume['parcelas']:,}".replace(",", "."), "Linhas reais em parcela_emprestimo", badge_text="Volume", badge_type="primary")
+        render_kpi(kpi_historicos, "Histórico de Status", f"{volume['historicos']:,}".replace(",", "."), "Linhas reais em historico_status_conta", badge_text="Volume", badge_type="primary")
+        if volume["transacoes"] > 10000:
+            st.caption("Massa de dados comprovada: mais de 10.000 transações para o estudo de otimização.")
+        else:
+            st.warning("A tabela transacao ainda não ultrapassou 10.000 registros. Execute a carga de dados antes da demonstração.")
+    else:
+        render_empty_state("Volume indisponível", "Verifique a conexão com o banco antes de executar o EXPLAIN.", icon="📊")
 
     cons_critica = st.selectbox("Selecione a Consulta Crítica para Análise:", [
         "1. Extrato por Conta e Período (idx_transacao_conta_data)",
