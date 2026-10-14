@@ -104,3 +104,85 @@ def render_callout(title: str, message: str, callout_type: str = "info", icon: s
     </div>
     """
     st.markdown(html, unsafe_allow_html=True)
+
+
+def render_searchable_account_picker(key_prefix: str, label: str = "Selecione a Conta Bancária:", filtro_status: str = None, help_text: str = None):
+    """
+    Renderiza um seletor pesquisável de contas no padrão rico solicitado pelo usuário (Print 5).
+    Permite pesquisar dinamicamente por número da conta (ex: 10001), nome do titular ou CPF.
+    Retorna uma tupla (numero_conta, dados_completos_conta).
+    """
+    from db import execute_query
+    
+    termo = st.text_input(
+        "🔍 Buscar conta (por número, titular ou CPF):",
+        placeholder="Digite o número (ex: 10001), titular ou CPF...",
+        key=f"search_{key_prefix}"
+    )
+    
+    where_clauses = []
+    params = []
+    
+    if termo.strip():
+        where_clauses.append("(cb.numero_conta LIKE %s OR c.nome LIKE %s OR c.cpf_cnpj LIKE %s)")
+        t = f"%{termo.strip()}%"
+        params.extend([t, t, t])
+        
+    if filtro_status:
+        where_clauses.append("cb.status = %s")
+        params.append(filtro_status)
+        
+    where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+    
+    sql = f"""
+    SELECT 
+        cb.numero_conta, 
+        cb.codigo_agencia,
+        cb.modalidade, 
+        cb.saldo, 
+        cb.status, 
+        c.nome AS titular, 
+        c.cpf_cnpj
+    FROM conta_bancaria cb
+    INNER JOIN cliente_conta cc ON cb.numero_conta = cc.numero_conta AND cc.tipo_titular = 'TITULAR'
+    INNER JOIN cliente c ON cc.id_cliente = c.id_cliente
+    {where_sql}
+    ORDER BY cb.numero_conta ASC 
+    LIMIT 45;
+    """
+    res, err = execute_query(sql, tuple(params) if params else None)
+    
+    if err:
+        st.error(err)
+        return None, None
+        
+    if not res:
+        render_callout(
+            "Nenhuma Conta Localizada",
+            f"Nenhuma conta bancária cadastrada corresponde ao termo de busca '{termo}'.",
+            callout_type="warning",
+            icon="⚠️"
+        )
+        return None, None
+        
+    def format_opt(acc):
+        num = acc['numero_conta']
+        titular = acc['titular']
+        saldo = float(acc['saldo'])
+        st_val = acc['status']
+        doc = acc['cpf_cnpj']
+        doc_mask = f"{doc[:3]}.***-**" if len(doc) >= 11 else doc
+        return f"🏦 {num} · {titular} (Doc: {doc_mask} | Saldo: R$ {saldo:,.2f} | {st_val})"
+        
+    opcoes = {acc['numero_conta']: acc for acc in res}
+    
+    sel_key = st.selectbox(
+        f"{label} ({len(res)} contas encontradas):",
+        options=list(opcoes.keys()),
+        format_func=lambda k: format_opt(opcoes[k]),
+        key=f"sel_{key_prefix}",
+        help=help_text
+    )
+    
+    return sel_key, opcoes[sel_key]
+

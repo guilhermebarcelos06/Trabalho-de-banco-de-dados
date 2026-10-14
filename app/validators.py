@@ -137,3 +137,42 @@ def formatar_moeda(val: float) -> str:
     if val is None:
         return "R$ 0,00"
     return f"R$ {val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def validar_numero_conta(num_conta: str) -> tuple[bool, str]:
+    """
+    Valida o número da conta bancária.
+    Deve seguir o formato padrão da agência: 4 a 6 dígitos seguidos de hífen e dígito (ex: 10001-X, 10099-0).
+    Bloqueia estritamente inserção de letras aleatórias como 'aasdad'.
+    """
+    if not num_conta or not num_conta.strip():
+        return False, "O número da conta não pode ser vazio."
+    
+    conta_limpa = num_conta.strip().upper()
+    padrao = r"^\d{4,6}-[0-9X]$"
+    
+    if not re.match(padrao, conta_limpa):
+        return False, f"Número de conta '{num_conta}' inválido. O formato obrigatório é números seguidos de hífen e dígito verificador (ex: 10001-X ou 10023-0). Letras avulsas não são permitidas."
+    
+    return True, "Número de conta válido."
+
+
+def validar_numero_cartao(n_cartao: str) -> tuple[bool, str]:
+    """
+    Valida o número do cartão bancário.
+    Deve conter exatamente 16 dígitos numéricos. Bloqueia letras e caracteres não numéricos.
+    """
+    if not n_cartao or not n_cartao.strip():
+        return False, "O número do cartão não pode ser vazio."
+    
+    cartao_limpo = limpar_digitos(n_cartao)
+    
+    # Se continha letras antes de limpar
+    if re.search(r"[a-zA-Z]", n_cartao):
+        return False, "O número do cartão não pode conter letras. Apenas 16 dígitos numéricos são aceitos."
+    
+    if len(cartao_limpo) != 16:
+        return False, f"O número do cartão deve conter exatamente 16 dígitos numéricos (informado: {len(cartao_limpo)} dígitos)."
+    
+    return True, "Número de cartão válido."
+

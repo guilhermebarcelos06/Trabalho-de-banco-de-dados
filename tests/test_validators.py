@@ -14,6 +14,8 @@ from validators import (
     validar_cpf_cnpj,
     validar_email,
     validar_telefone,
+    validar_numero_conta,
+    validar_numero_cartao,
     formatar_moeda
 )
 
@@ -68,6 +70,34 @@ class TestValidators(unittest.TestCase):
         self.assertFalse(validar_telefone("12345")[0])
         self.assertFalse(validar_telefone("(05) 98765-4321")[0]) # DDD 05 não existe
         self.assertFalse(validar_telefone("(61) 88765-4321")[0]) # Celular de 11 dígitos sem 9
+
+    def test_numero_conta_valido(self):
+        self.assertTrue(validar_numero_conta("10001-X")[0])
+        self.assertTrue(validar_numero_conta("10023-0")[0])
+        self.assertTrue(validar_numero_conta("10099-x")[0])
+
+    def test_numero_conta_invalido_letras(self):
+        # Bloqueia estritamente letras aleatórias (conforme Print 2: aasdad)
+        ok, msg = validar_numero_conta("aasdad")
+        self.assertFalse(ok)
+        self.assertIn("inválido", msg)
+
+        self.assertFalse(validar_numero_conta("123")[0])
+        self.assertFalse(validar_numero_conta("abcde-1")[0])
+        self.assertFalse(validar_numero_conta("")[0])
+
+    def test_numero_cartao_valido(self):
+        self.assertTrue(validar_numero_cartao("4000123456789010")[0])
+        self.assertTrue(validar_numero_cartao("5500 1234 5678 9010")[0])
+
+    def test_numero_cartao_invalido(self):
+        # Bloqueia letras em números de cartão
+        ok, msg = validar_numero_cartao("4000aasdad123")
+        self.assertFalse(ok)
+        self.assertIn("letras", msg)
+
+        self.assertFalse(validar_numero_cartao("12345")[0])
+        self.assertFalse(validar_numero_cartao("")[0])
 
     def test_formatar_moeda(self):
         self.assertEqual(formatar_moeda(1500.5), "R$ 1.500,50")

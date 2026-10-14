@@ -9,12 +9,15 @@ from ui_components import (
     render_kpi,
     render_empty_state,
     render_status_badge,
-    render_callout
+    render_callout,
+    render_searchable_account_picker
 )
 from validators import (
     validar_cpf_cnpj,
     validar_email,
     validar_telefone,
+    validar_numero_conta,
+    validar_numero_cartao,
     formatar_moeda
 )
 
@@ -261,7 +264,7 @@ if menu == "1. CRUD de 4 Entidades (B1)":
             with st.form("form_nova_conta"):
                 c1, c2 = st.columns(2)
                 with c1:
-                    num_conta = st.text_input("Número da Conta (ex: 10099-X):")
+                    num_conta = st.text_input("Número da Conta (formato 10099-X):", placeholder="10099-X")
                     cod_agencia = st.number_input("Código da Agência (1 a 5):", min_value=1, max_value=5, value=1)
                 with c2:
                     modalidade = st.selectbox("Modalidade:", ["CORRENTE", "POUPANCA"])
@@ -269,31 +272,46 @@ if menu == "1. CRUD de 4 Entidades (B1)":
                 
                 sub_c = st.form_submit_button("Abrir Conta Bancária", type="primary")
                 if sub_c:
+                    ok_num, msg_num = validar_numero_conta(num_conta)
+                    if not ok_num:
+                        st.error(f"❌ {msg_num}")
+                        st.stop()
+                    
                     sql = "INSERT INTO conta_bancaria (numero_conta, codigo_agencia, modalidade, saldo, data_abertura, status) VALUES (%s, %s, %s, %s, CURDATE(), 'ATIVA');"
-                    ok, _, err = execute_dml(sql, (num_conta.strip(), cod_agencia, modalidade, saldo_ini))
+                    ok, _, err = execute_dml(sql, (num_conta.strip().upper(), cod_agencia, modalidade, saldo_ini))
                     if ok:
-                        st.success(f"✅ Conta {num_conta} aberta com sucesso com status ATIVA!")
+                        st.success(f"✅ Conta {num_conta.upper()} aberta com sucesso com status ATIVA!")
+                        st.rerun()
                     else:
                         st.error(err)
 
         with tab_status:
-            c_target = st.text_input("Número da Conta Alvo:")
-            c1, c2 = st.columns(2)
-            with c1:
-                novo_st = st.selectbox("Novo Status:", ["ATIVA", "BLOQUEADA", "ENCERRADA"])
-            with c2:
-                motivo = st.text_input("Justificativa da Alteração:")
+            st.markdown("#### 🔒 Seleção e Alteração de Status da Conta")
+            c_target, conta_selecionada = render_searchable_account_picker("alt_status_conta", label="Conta Alvo para Alteração")
             
-            if st.button("Confirmar Alteração de Status", type="primary"):
-                sql = "UPDATE conta_bancaria SET status = %s WHERE numero_conta = %s;"
-                ok, _, err = execute_dml(sql, (novo_st, c_target))
-                if ok:
-                    # Registra histórico temporal na entidade fraca
-                    sql_h = "INSERT INTO historico_status_conta (numero_conta, status_anterior, status_novo, data_alteracao, motivo) VALUES (%s, 'ANTERIOR', %s, NOW(), %s);"
-                    execute_dml(sql_h, (c_target, novo_st, motivo))
-                    st.success(f"✅ Status da conta {c_target} alterado para {novo_st}! Histórico e auditoria disparados.")
-                else:
-                    st.error(err)
+            if c_target and conta_selecionada:
+                st.info(f"📋 Conta Atual: **{conta_selecionada['numero_conta']}** · Titular: **{conta_selecionada['titular']}** · Status Atual: **{conta_selecionada['status']}**")
+                
+                c1, c2 = st.columns(2)
+                with c1:
+                    novo_st = st.selectbox("Novo Status:", ["ATIVA", "BLOQUEADA", "ENCERRADA"], key=f"novo_st_{c_target}")
+                with c2:
+                    motivo = st.text_input("Justificativa da Alteração:", placeholder="Ex: Solicitação do cliente / Fraude", key=f"motivo_{c_target}")
+                
+                if st.button("Confirmar Alteração de Status", type="primary", key=f"btn_st_{c_target}"):
+                    if not motivo.strip():
+                        st.warning("⚠️ Informe o motivo da alteração de status para registro no histórico.")
+                    else:
+                        sql = "UPDATE conta_bancaria SET status = %s WHERE numero_conta = %s;"
+                        ok, _, err = execute_dml(sql, (novo_st, c_target))
+                        if ok:
+                            # Registra histórico temporal na entidade fraca
+                            sql_h = "INSERT INTO historico_status_conta (numero_conta, status_anterior, status_novo, data_alteracao, motivo) VALUES (%s, %s, %s, NOW(), %s);"
+                            execute_dml(sql_h, (c_target, conta_selecionada['status'], novo_st, motivo.strip()))
+                            st.success(f"✅ Status da conta {c_target} alterado para {novo_st}! Histórico e auditoria disparados.")
+                            st.rerun()
+                        else:
+                            st.error(err)
 
     # -----------------------------
     # CRUD 3: CARTÃO
@@ -311,29 +329,51 @@ if menu == "1. CRUD de 4 Entidades (B1)":
                 render_empty_state("Nenhum cartão emitido", "Emita novos cartões vinculados a contas correntes.", icon="💳")
 
         with tab_novo:
+            st.markdown("#### 💳 Emissão de Novo Cartão")
+            n_conta_vinc, conta_vinc_obj = render_searchable_account_picker("cartao_vinc", label="Conta Bancária Vinculada")
+            
             with st.form("form_novo_cartao"):
-                n_cartao = st.text_input("Número do Cartão (16 dígitos numéricos):", max_chars=16)
-                n_conta_vinc = st.text_input("Número da Conta Vinculada:")
+                n_cartao = st.text_input("Número do Cartão (16 dígitos numéricos):", max_chars=16, placeholder="Ex: 4000123456789010")
                 tipo_c = st.selectbox("Tipo de Cartão:", ["DEBITO", "CREDITO", "MULTIPLO"])
                 sub_cart = st.form_submit_button("Emitir Novo Cartão", type="primary")
                 if sub_cart:
+                    if not n_conta_vinc:
+                        st.warning("Selecione uma conta bancária para vincular o cartão.")
+                        st.stop()
+                    
+                    ok_cart, msg_cart = validar_numero_cartao(n_cartao)
+                    if not ok_cart:
+                        st.error(f"❌ {msg_cart}")
+                        st.stop()
+                    
                     sql = "INSERT INTO cartao (numero_cartao, numero_conta, tipo, status) VALUES (%s, %s, %s, 'AGUARDANDO_DESBLOQUEIO');"
-                    ok, _, err = execute_dml(sql, (n_cartao.strip(), n_conta_vinc.strip(), tipo_c))
+                    ok, _, err = execute_dml(sql, (n_cartao.strip(), n_conta_vinc, tipo_c))
                     if ok:
                         st.success(f"✅ Cartão {n_cartao} emitido com sucesso! Status inicial: AGUARDANDO_DESBLOQUEIO.")
+                        st.rerun()
                     else:
                         st.error(err)
 
         with tab_st:
-            num_cart_edit = st.text_input("Número do Cartão a Modificar:")
-            st_cart = st.selectbox("Novo Status:", ["ATIVO", "BLOQUEADO", "CANCELADO", "AGUARDANDO_DESBLOQUEIO"])
-            if st.button("Atualizar Situação do Cartão"):
-                sql = "UPDATE cartao SET status = %s WHERE numero_cartao = %s;"
-                ok, _, err = execute_dml(sql, (st_cart, num_cart_edit))
-                if ok:
-                    st.success("✅ Situação do cartão atualizada!")
-                else:
-                    st.error(err)
+            st.markdown("#### 🔄 Atualização de Status do Cartão")
+            # Lista cartões existentes
+            res_cartoes, _ = execute_query("SELECT c.numero_cartao, c.numero_conta, c.tipo, c.status, cli.nome AS titular FROM cartao c INNER JOIN conta_bancaria cb ON c.numero_conta = cb.numero_conta INNER JOIN cliente_conta cc ON cb.numero_conta = cc.numero_conta AND cc.tipo_titular = 'TITULAR' INNER JOIN cliente cli ON cc.id_cliente = cli.id_cliente ORDER BY c.numero_cartao DESC LIMIT 30;")
+            
+            if res_cartoes:
+                opcoes_c = {c['numero_cartao']: f"💳 {c['numero_cartao']} ({c['tipo']}) · Conta {c['numero_conta']} · {c['titular']} [{c['status']}]" for c in res_cartoes}
+                num_cart_edit = st.selectbox("Selecione o Cartão para Alteração:", options=list(opcoes_c.keys()), format_func=lambda k: opcoes_c[k])
+                st_cart = st.selectbox("Novo Status:", ["ATIVO", "BLOQUEADO", "CANCELADO", "AGUARDANDO_DESBLOQUEIO"], key="st_cart_sel")
+                
+                if st.button("Atualizar Situação do Cartão", type="primary"):
+                    sql = "UPDATE cartao SET status = %s WHERE numero_cartao = %s;"
+                    ok, _, err = execute_dml(sql, (st_cart, num_cart_edit))
+                    if ok:
+                        st.success("✅ Situação do cartão atualizada!")
+                        st.rerun()
+                    else:
+                        st.error(err)
+            else:
+                render_empty_state("Nenhum cartão para alterar", "Emita cartões na aba 'Emitir Cartão'.", icon="💳")
 
     # -----------------------------
     # CRUD 4: BENEFICIÁRIO
@@ -351,10 +391,12 @@ if menu == "1. CRUD de 4 Entidades (B1)":
                 render_empty_state("Nenhum beneficiário cadastrado", "Cadastre favorecidos frequentes para transferências rápidas.", icon="🤝")
 
         with tab_novo:
+            st.markdown("#### ➕ Adicionar Favorecido / Beneficiário")
+            c_orig, conta_orig_obj = render_searchable_account_picker("ben_orig", label="Conta de Origem do Cliente")
+            
             with st.form("form_novo_ben"):
                 c1, c2 = st.columns(2)
                 with c1:
-                    c_orig = st.text_input("Conta de Origem do Cliente:")
                     nome_b = st.text_input("Nome Completo do Favorecido:")
                     doc_b = st.text_input("CPF ou CNPJ do Favorecido:")
                 with c2:
@@ -364,6 +406,19 @@ if menu == "1. CRUD de 4 Entidades (B1)":
                 
                 sub_b = st.form_submit_button("Cadastrar Favorecido", type="primary")
                 if sub_b:
+                    if not c_orig:
+                        st.warning("⚠️ Selecione uma conta de origem válida.")
+                        st.stop()
+                    
+                    if not nome_b.strip():
+                        st.warning("⚠️ Informe o nome do favorecido.")
+                        st.stop()
+                        
+                    ok_doc, msg_doc = validar_cpf_cnpj(doc_b)
+                    if not ok_doc:
+                        st.error(f"❌ {msg_doc}")
+                        st.stop()
+                        
                     sql = "INSERT INTO beneficiario (numero_conta_origem, nome, documento, banco, agencia, conta) VALUES (%s, %s, %s, %s, %s, %s);"
                     ok, last_id, err = execute_dml(sql, (c_orig.strip(), nome_b.strip(), doc_b.strip(), bco_b.strip(), ag_b.strip(), cta_b.strip()))
                     if ok:
@@ -397,16 +452,16 @@ elif menu == "2. Consultas Parametrizadas (B1)":
             key="modo_extrato_radio"
         )
 
-        c1, c2, c3 = st.columns([1.5, 1, 1])
-        with c1:
-            if modo_extrato == "Conta Específica":
-                conta_filtro = st.text_input("Número da Conta Bancária:", value="10001-X", placeholder="Ex: 10001-X")
-            else:
-                conta_filtro = ""
-                st.text_input("Filtro de Conta:", value="Todas as Contas Selecionadas", disabled=True)
-        with c2:
+        if modo_extrato == "Conta Específica":
+            conta_filtro, _ = render_searchable_account_picker("extrato_conta", label="Buscar Conta Bancária para o Extrato")
+        else:
+            conta_filtro = ""
+            render_callout("Modo Consolidado Ativo", "A consulta retornará transações de todas as 45 contas cadastradas.", callout_type="info", icon="🌐")
+
+        c_d1, c_d2 = st.columns(2)
+        with c_d1:
             data_ini = st.date_input("Data Inicial:", value=pd.to_datetime("2024-01-01"))
-        with c3:
+        with c_d2:
             data_fim = st.date_input("Data Final:", value=pd.to_datetime("2026-12-31"))
 
         if st.button("Buscar Extrato Parametrizado", type="primary"):
@@ -414,26 +469,10 @@ elif menu == "2. Consultas Parametrizadas (B1)":
             where_conta = ""
             
             if modo_extrato == "Conta Específica":
-                conta_alvo = conta_filtro.strip()
-                if not conta_alvo:
-                    st.warning("⚠️ Por favor, informe o número da conta para consultar ou selecione 'Todas as Contas'.")
+                if not conta_filtro:
+                    st.warning("⚠️ Selecione uma conta bancária para consultar ou marque 'Todas as Contas (Consolidado Geral)'.")
                     st.stop()
-                
-                # Validação de existência da conta no banco
-                res_check, _ = execute_query(
-                    "SELECT 1 FROM conta_bancaria WHERE numero_conta = %s;",
-                    (conta_alvo,),
-                    fetch_all=False
-                )
-                if not res_check:
-                    render_callout(
-                        "Conta Não Encontrada",
-                        f"A conta bancária '{conta_alvo}' não foi localizada no cadastro do banco. Verifique o número digitado ou utilize a opção 'Todas as Contas (Consolidado Geral)'.",
-                        callout_type="warning",
-                        icon="⚠️"
-                    )
-                    st.stop()
-
+                conta_alvo = conta_filtro
                 where_conta = "AND (t.numero_conta_origem = %s OR t.numero_conta_destino = %s)"
                 params.extend([conta_alvo, conta_alvo])
 
@@ -524,10 +563,12 @@ elif menu == "3. Relatório Consolidado - VIEW (B1)":
     if res:
         df = pd.DataFrame(res)
         
+        saldo_custodia = float(df['saldo_total_custodia'].astype(float).sum())
+        volume_total = float(df['volume_total_transacionado'].astype(float).sum())
         c1, c2, c3 = st.columns(3)
         render_kpi(c1, "Contas Ativas", f"{int(df['total_contas_ativas'].sum())}", "Distribuídas em todas as agências", badge_text="Total", badge_type="primary")
-        render_kpi(c2, "Custódia Global", f"R$ {df['saldo_total_custodia'].sum():,.2f}", "Depósitos totais sob custódia", badge_text="Depósitos", badge_type="success")
-        render_kpi(c3, "Volume Movimentado", f"R$ {df['volume_total_transacionado'].sum():,.2f}", "Total de transações registradas", badge_text="Movimento", badge_type="neutral")
+        render_kpi(c2, "Custódia Global", f"R$ {saldo_custodia:,.2f}", "Depósitos totais sob custódia", badge_text="Depósitos", badge_type="success")
+        render_kpi(c3, "Volume Movimentado", f"R$ {volume_total:,.2f}", "Total de transações registradas", badge_text="Movimento", badge_type="neutral")
         
         st.markdown("### Resumo Consolidado por Agência")
         
@@ -554,7 +595,7 @@ elif menu == "3. Relatório Consolidado - VIEW (B1)":
         
         # Gráfico Horizontal Elegante em Altair (elimina textos verticais)
         df_chart = df.copy()
-        df_chart["volume_milhoes"] = df_chart["volume_total_transacionado"] / 1e6
+        df_chart["volume_milhoes"] = df_chart["volume_total_transacionado"].astype(float) / 1e6
         df_chart["volume_fmt"] = df_chart["volume_total_transacionado"].apply(lambda v: formatar_moeda(float(v)))
         
         chart = alt.Chart(df_chart).mark_bar(
@@ -616,16 +657,22 @@ elif menu == "4. Transação Multitabela & Rollback (B1/B3)":
 
     c1, c2 = st.columns(2)
     with c1:
-        c_origem = st.selectbox("Conta de Origem:", ["10001-X", "10002-X", "10003-X", "10004-X", "10005-X"])
-        res_o, _ = execute_query("SELECT saldo, status FROM conta_bancaria WHERE numero_conta = %s;", (c_origem,), fetch_all=False)
-        saldo_o = float(res_o['saldo']) if res_o else 0.0
-        render_kpi(st, f"Saldo Origem ({c_origem})", f"R$ {saldo_o:,.2f}", f"Status: {res_o['status'] if res_o else 'N/A'}", badge_text="Origem", badge_type="neutral")
+        st.markdown("##### 📤 Conta de Origem (Débito)")
+        c_origem, conta_o_obj = render_searchable_account_picker("acid_origem", label="Conta de Origem")
+        if conta_o_obj:
+            saldo_o = float(conta_o_obj['saldo'])
+            render_kpi(st, f"Saldo Origem ({c_origem})", f"R$ {saldo_o:,.2f}", f"Titular: {conta_o_obj['titular']} · Status: {conta_o_obj['status']}", badge_text="Origem", badge_type="neutral")
+        else:
+            saldo_o = 0.0
 
     with c2:
-        c_destino = st.selectbox("Conta de Destino:", ["10002-X", "10001-X", "10003-X", "10004-X", "10005-X"])
-        res_d, _ = execute_query("SELECT saldo, status FROM conta_bancaria WHERE numero_conta = %s;", (c_destino,), fetch_all=False)
-        saldo_d = float(res_d['saldo']) if res_d else 0.0
-        render_kpi(st, f"Saldo Destino ({c_destino})", f"R$ {saldo_d:,.2f}", f"Status: {res_d['status'] if res_d else 'N/A'}", badge_text="Destino", badge_type="neutral")
+        st.markdown("##### 📥 Conta de Destino (Crédito)")
+        c_destino, conta_d_obj = render_searchable_account_picker("acid_destino", label="Conta de Destino")
+        if conta_d_obj:
+            saldo_d = float(conta_d_obj['saldo'])
+            render_kpi(st, f"Saldo Destino ({c_destino})", f"R$ {saldo_d:,.2f}", f"Titular: {conta_d_obj['titular']} · Status: {conta_d_obj['status']}", badge_text="Destino", badge_type="neutral")
+        else:
+            saldo_d = 0.0
 
     valor_transf = st.number_input("Valor da Operação (R$):", min_value=1.0, value=300.0, step=50.0)
 
@@ -635,6 +682,12 @@ elif menu == "4. Transação Multitabela & Rollback (B1/B3)":
     with col_btn1:
         st.markdown("**🟢 Execução Normal com COMMIT**")
         if st.button("Executar Transferência com Sucesso", type="primary"):
+            if not c_origem or not c_destino:
+                st.warning("⚠️ Selecione as contas de origem e destino para a operação.")
+                st.stop()
+            if c_origem == c_destino:
+                st.error("❌ A conta de origem e a conta de destino devem ser distintas.")
+                st.stop()
             sucesso, msg = executar_transferencia_transacional(c_origem, c_destino, valor_transf, simular_falha=False)
             if sucesso:
                 st.success(msg)
@@ -646,6 +699,12 @@ elif menu == "4. Transação Multitabela & Rollback (B1/B3)":
         st.markdown("**🔴 Teste de Resiliência com Falha Forçada (ROLLBACK)**")
         st.caption("Provoca uma exceção deliberada logo após debitar a origem, testando a restauração do saldo.")
         if st.button("Simular Falha no Meio da Transação", type="secondary"):
+            if not c_origem or not c_destino:
+                st.warning("⚠️ Selecione as contas de origem e destino para a operação.")
+                st.stop()
+            if c_origem == c_destino:
+                st.error("❌ A conta de origem e a conta de destino devem ser distintas.")
+                st.stop()
             sucesso, msg = executar_transferencia_transacional(c_origem, c_destino, valor_transf, simular_falha=True)
             if sucesso:
                 st.success(msg)
